@@ -1,0 +1,55 @@
+- name: Ensure ISO upload directory exists on datastore
+  community.vmware.vsphere_file:
+    hostname: "{{ vsphere_server }}"
+    username: "{{ vsphere_user }}"
+    password: "{{ vsphere_password }}"
+    validate_certs: false
+    datacenter: "{{ vsphere_datacenter }}"
+    datastore: "{{ vsphere_datastore }}"
+    path: "iso"
+    state: directory
+
+- name: Upload Debian 12 cloud image
+  community.vmware.vsphere_copy:
+    hostname: "{{ vsphere_server }}"
+    username: "{{ vsphere_user }}"
+    password: "{{ vsphere_password }}"
+    validate_certs: false
+    datacenter: "{{ vsphere_datacenter }}"
+    datastore: "{{ vsphere_datastore }}"
+    src: "{{ role_path }}/files/images/debian-12-genericcloud-amd64.qcow2"
+    dest: "iso/debian-12-genericcloud-amd64.qcow2"
+
+- name: Upload Debian 13 cloud image
+  community.vmware.vsphere_copy:
+    hostname: "{{ vsphere_server }}"
+    username: "{{ vsphere_user }}"
+    password: "{{ vsphere_password }}"
+    validate_certs: false
+    datacenter: "{{ vsphere_datacenter }}"
+    datastore: "{{ vsphere_datastore }}"
+    src: "{{ role_path }}/files/images/debian-13-genericcloud-amd64.qcow2"
+    dest: "iso/debian-13-genericcloud-amd64.qcow2"
+
+- name: Upload Ubuntu 22.04 cloud image
+  community.vmware.vsphere_copy:
+    hostname: "{{ vsphere_server }}"
+    username: "{{ vsphere_user }}"
+    password: "{{ vsphere_password }}"
+    validate_certs: false
+    datacenter: "{{ vsphere_datacenter }}"
+    datastore: "{{ vsphere_datastore }}"
+    src: "{{ role_path }}/files/images/ubuntu-22.04-server-cloudimg-amd64.iso"
+    dest: "iso/ubuntu-22.04-server-cloudimg-amd64.iso"
+
+- name: Upload Ubuntu 24.04 cloud image
+  community.vmware.vsphere_copy:
+    hostname: "{{ vsphere_server }}"
+    username: "{{ vsphere_user }}"
+    password: "{{ vsphere_password }}"
+    validate_certs: false
+    datacenter: "{{ vsphere_datacenter }}"
+    datastore: "{{ vsphere_datastore }}"
+    src: "{{ role_path }}/files/images/ubuntu-24.04-server-cloudimg-amd64.iso"
+    dest: "iso/ubuntu-24.04-server-cloudimg-amd64.iso"
+

@@ -1,0 +1,34 @@
+{
+  "builders": [
+    {
+      "type": "vsphere-iso",
+      "vcenter_server": "{{ vsphere_server }}",
+      "username": "{{ vsphere_user }}",
+      "password": "{{ vsphere_password }}",
+      "datacenter": "{{ vsphere_datacenter }}",
+      "cluster": "{{ vsphere_cluster }}",
+      "datastore": "{{ vsphere_datastore }}",
+      "folder": "{{ vsphere_folder }}",
+      "network": "{{ vsphere_network }}",
+      "vm_name": "debian12-template",
+      "CPUs": "{{ vm_cpu }}",
+      "RAM": "{{ vm_memory }}",
+      "disk_size": "{{ vm_disk }}",
+      "guest_os_type": "debian12_64Guest",
+      "firmware": "efi-secure",
+      "iso_paths": [
+        "[{{ vsphere_datastore }}] iso/ubuntu-22.04-server-cloudimg-amd64.iso2"
+      ],
+      "ssh_username": "ansible",
+      "ssh_password": "ansible",
+      "floppy_files": [],
+      "cd_files": [
+        "{{ role_path }}/files/cloud-init/ubuntu22/user-data",
+        "{{ role_path }}/files/cloud-init/ubuntu22/meta-data"
+      ],
+      "cd_label": "cidata",
+      "ssh_timeout": "30m"
+    }
+  ]
+}
+

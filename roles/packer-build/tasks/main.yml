@@ -1,0 +1,12 @@
+- name: Ensure packer-offline-keys directory exists
+  include_tasks: ssh_keys.yml
+
+- name: Run Packer builds
+  include_tasks: packer.yml
+  tags: [packerbuild]
+
+- name: Upload cloud images
+  include_tasks: upload_images.yml
+  tags: [imageupload]
+
+
