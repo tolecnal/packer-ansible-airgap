@@ -7,13 +7,21 @@ set -euo pipefail
 
 # Required environment variables
 : "${VSPHERE_DATACENTER:?Must be set}"
-: "${VSPHERE_DATASTORE:?Must be set}"
+: "${VSPHERE_DATASTORE:?Must be set}"   # Must be a real datastore, not a cluster
 : "${VSPHERE_CLUSTER:?Must be set}"
 : "${VSPHERE_FOLDER:?Must be set}"
 : "${VSPHERE_RESOURCE_POOL:?Must be set}"
 : "${VSPHERE_NETWORK:?Must be set}"
 
 FILES_DIR="files"
+
+# --- Verify datastore exists ---
+if ! govc datastore.info "$VSPHERE_DATASTORE" >/dev/null 2>&1; then
+  echo "❌ Error: Datastore '$VSPHERE_DATASTORE' not found."
+  govc datastore.info
+  exit 1
+fi
+echo "✅ Found datastore: $VSPHERE_DATASTORE"
 
 # --- Verify network exists ---
 if ! govc find "/${VSPHERE_DATACENTER}/network" -name "$VSPHERE_NETWORK" >/dev/null 2>&1; then
@@ -69,7 +77,7 @@ for template in "${!templates[@]}"; do
   if [[ "$EXT" == "ova" ]]; then
     echo "📦 Importing OVA -> $template"
     govc import.ova \
-      -ds="$VSPHERE_DATACENTER" \
+      -ds="$VSPHERE_DATASTORE" \
       -pool="$VSPHERE_RESOURCE_POOL" \
       -folder="$VSPHERE_FOLDER" \
       -name="$template" \
@@ -85,6 +93,13 @@ EOF
 
   elif [[ "$EXT" == "qcow2" ]]; then
     GUEST_ID="${guest_ids[$template]}"
+    VMDK_FILE="${file%.qcow2}.vmdk"
+
+    # Convert QCOW2 -> VMDK if not exists
+    if [[ ! -f "$VMDK_FILE" ]]; then
+      echo "🔄 Converting QCOW2 -> VMDK for $template"
+      qemu-img convert -p -O vmdk "$file" "$VMDK_FILE"
+    fi
 
     echo "📦 Creating VM -> $template (guestId=$GUEST_ID)"
     govc vm.create \
@@ -102,8 +117,8 @@ EOF
     controller_name=$(govc device.scsi.add -vm "$template" -type pvscsi | awk '/^pvscsi/ {print $1}')
     echo "    Controller created: $controller_name"
 
-    echo "📦 Uploading QCOW2 as VMDK -> $template"
-    govc datastore.upload -ds "$VSPHERE_DATASTORE" "$file" "$template/$template-disk1.vmdk"
+    echo "📦 Uploading VMDK -> $template"
+    govc datastore.upload -ds "$VSPHERE_DATASTORE" "$VMDK_FILE" "$template/$template-disk1.vmdk"
 
     echo "📦 Attaching disk -> $template"
     govc vm.disk.attach \
@@ -124,5 +139,4 @@ EOF
 done
 
 echo "🎉 All templates processed."
-
 
