@@ -19,14 +19,35 @@ log() {
 
 # Test with one specific file
 debug_single_file() {
-    local ova_file="$FILES_DIR/ubuntu-noble-server-cloudimg-amd64.ova"
+    echo
+    echo "=== CHECKING FILE LOCATIONS ==="
+    
+    echo "Looking for Ubuntu OVA files in FILES_DIR:"
+    find "$FILES_DIR" -name "ubuntu-*.ova" -type f 2>/dev/null || echo "No Ubuntu OVA files found"
     
     echo
-    echo "=== DEBUGGING SINGLE FILE ==="
-    echo "Source file: $ova_file"
+    echo "All files in FILES_DIR:"
+    ls -la "$FILES_DIR" 2>/dev/null || echo "FILES_DIR doesn't exist or is empty"
+    
+    echo
+    echo "Looking in current directory:"
+    ls -la . | grep -E "\.(ova|qcow2|img)$" || echo "No image files in current directory"
+    
+    echo
+    echo "Looking in parent directory:"
+    ls -la .. | grep -E "\.(ova|qcow2|img)$" || echo "No image files in parent directory"
+    
+    # Find any OVA files anywhere in the project
+    echo
+    echo "Searching for ANY Ubuntu OVA files in project:"
+    find "$SCRIPT_DIR" -name "*ubuntu*noble*.ova" -type f 2>/dev/null || echo "No Ubuntu Noble OVA files found anywhere"
+    
+    # Let user specify the correct path
+    echo
+    read -p "Enter the FULL path to your ubuntu-noble-server-cloudimg-amd64.ova file: " ova_file
     
     if [[ ! -f "$ova_file" ]]; then
-        echo "ERROR: Source file doesn't exist!"
+        echo "ERROR: File still doesn't exist at: $ova_file"
         exit 1
     fi
     
@@ -126,3 +147,4 @@ debug_single_file() {
 echo "Starting debug..."
 debug_single_file
 echo "Debug complete!"
+
