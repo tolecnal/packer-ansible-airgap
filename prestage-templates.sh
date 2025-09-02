@@ -34,18 +34,18 @@ echo "✅ Found resource pool: $VSPHERE_RESOURCE_POOL"
 
 # --- Templates to stage ---
 declare -A templates=(
-  ["ubuntu-22"]="${FILES_DIR}/jammy-server-cloudimg-amd64.ova"
-  ["ubuntu-24"]="${FILES_DIR}/noble-server-cloudimg-amd64.ova"
-  ["debian-12"]="${FILES_DIR}/debian-12-genericcloud-amd64.qcow2"
-  ["debian-13"]="${FILES_DIR}/debian-13-genericcloud-amd64.qcow2"
+  ["ubuntu-22-packer"]="${FILES_DIR}/jammy-server-cloudimg-amd64.ova"
+  ["ubuntu-24-packer"]="${FILES_DIR}/noble-server-cloudimg-amd64.ova"
+  ["debian-12-packer"]="${FILES_DIR}/debian-12-genericcloud-amd64.qcow2"
+  ["debian-13-packer"]="${FILES_DIR}/debian-13-genericcloud-amd64.qcow2"
 )
 
 # --- Guest IDs per OS for QCOW2 imports ---
 declare -A guest_ids=(
-  ["debian-12"]="other5Linux64Guest"
-  ["debian-13"]="other5Linux64Guest"
-  ["ubuntu-22"]="ubuntu64Guest"
-  ["ubuntu-24"]="ubuntu64Guest"
+  ["debian-12-packer"]="other5xLinuxGuest"
+  ["debian-13-packer"]="other5xLinuxGuest"
+  ["ubuntu-22-packer"]="ubuntu64Guest"
+  ["ubuntu-24-packer"]="ubuntu64Guest"
 )
 
 # --- Prestage loop ---
@@ -69,7 +69,7 @@ for template in "${!templates[@]}"; do
   if [[ "$EXT" == "ova" ]]; then
     echo "📦 Importing OVA -> $template"
     govc import.ova \
-      -ds="$VSPHERE_DATASTORE" \
+      -ds="$VSPHERE_DATACENTER" \
       -pool="$VSPHERE_RESOURCE_POOL" \
       -folder="$VSPHERE_FOLDER" \
       -name="$template" \
@@ -99,7 +99,8 @@ EOF
       "$template"
 
     echo "📦 Adding PVSCSI controller -> $template"
-    govc device.scsi.add -vm "$template" -type pvscsi
+    controller_name=$(govc device.scsi.add -vm "$template" -type pvscsi | awk '/^pvscsi/ {print $1}')
+    echo "    Controller created: $controller_name"
 
     echo "📦 Uploading QCOW2 as VMDK -> $template"
     govc datastore.upload -ds "$VSPHERE_DATASTORE" "$file" "$template/$template-disk1.vmdk"
@@ -108,7 +109,7 @@ EOF
     govc vm.disk.attach \
       -vm "$template" \
       -disk "$template/$template-disk1.vmdk" \
-      -controller "pvscsi0" \
+      -controller "$controller_name" \
       -ds "$VSPHERE_DATASTORE"
 
     echo "📦 Marking as template -> $template"
@@ -123,4 +124,5 @@ EOF
 done
 
 echo "🎉 All templates processed."
+
 
