@@ -42,8 +42,8 @@ declare -A templates=(
 
 # --- Guest IDs per OS for QCOW2 imports ---
 declare -A guest_ids=(
-  ["debian-12"]="debian10_64Guest"
-  ["debian-13"]="debian10_64Guest"
+  ["debian-12"]="other5Linux64Guest"
+  ["debian-13"]="other5Linux64Guest"
   ["ubuntu-22"]="ubuntu64Guest"
   ["ubuntu-24"]="ubuntu64Guest"
 )
@@ -98,11 +98,18 @@ EOF
       -net="$VSPHERE_NETWORK" \
       "$template"
 
+    echo "📦 Adding PVSCSI controller -> $template"
+    govc device.scsi.add -vm "$template" -type pvscsi
+
     echo "📦 Uploading QCOW2 as VMDK -> $template"
-    govc datastore.upload -ds="$VSPHERE_DATASTORE" "$file" "$template/$template-disk1.vmdk"
+    govc datastore.upload -ds "$VSPHERE_DATASTORE" "$file" "$template/$template-disk1.vmdk"
 
     echo "📦 Attaching disk -> $template"
-    govc vm.disk.attach -vm="$template" -disk "$template/$template-disk1.vmdk" -controller pvscsi
+    govc vm.disk.attach \
+      -vm "$template" \
+      -disk "$template/$template-disk1.vmdk" \
+      -controller "pvscsi0" \
+      -ds "$VSPHERE_DATASTORE"
 
     echo "📦 Marking as template -> $template"
     govc vm.markastemplate "$template"
