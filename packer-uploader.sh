@@ -41,23 +41,46 @@ check_requirements() {
 
 # List images in files directory
 list_images() {
-    log "INFO" "Available images in $FILES_DIR:"
+    log "INFO" "Scanning for available images..."
     echo
     
+    echo "Available images:"
+    echo "=================="
+    
+    local found_images=false
+    
     # Ubuntu OVA files
-    find "$FILES_DIR" -name "ubuntu-*.ova" 2>/dev/null | while read -r file; do
+    while IFS= read -r -d '' file; do
         echo "Ubuntu OVA: $(basename "$file")"
-    done
+        found_images=true
+    done < <(find "$FILES_DIR" -name "ubuntu-*.ova" -print0 2>/dev/null || true)
     
     # Ubuntu IMG files  
-    find "$FILES_DIR" -name "ubuntu-*.img" 2>/dev/null | while read -r file; do
+    while IFS= read -r -d '' file; do
         echo "Ubuntu IMG: $(basename "$file")"
-    done
+        found_images=true
+    done < <(find "$FILES_DIR" -name "ubuntu-*.img" -print0 2>/dev/null || true)
     
     # Debian qcow2 files
-    find "$FILES_DIR" -name "debian-*.qcow2" 2>/dev/null | while read -r file; do
+    while IFS= read -r -d '' file; do
         echo "Debian qcow2: $(basename "$file")"
-    done
+        found_images=true
+    done < <(find "$FILES_DIR" -name "debian-*.qcow2" -print0 2>/dev/null || true)
+    
+    if [[ "$found_images" == "false" ]]; then
+        echo "No supported image files found in $FILES_DIR"
+        echo
+        echo "Supported formats:"
+        echo "- ubuntu-*.ova"
+        echo "- ubuntu-*.img" 
+        echo "- debian-*.qcow2"
+        echo
+        echo "Please check that your files are in: $FILES_DIR"
+        
+        # Show what's actually in the directory
+        echo "Contents of $FILES_DIR:"
+        ls -la "$FILES_DIR" 2>/dev/null || echo "Directory doesn't exist or is empty"
+    fi
     
     echo
 }
@@ -69,30 +92,56 @@ convert_ubuntu_ova() {
     local name_no_ext="${basename%.ova}"
     
     log "INFO" "Converting Ubuntu OVA: $basename"
+    log "INFO" "Source: $ova_file"
+    
+    # Verify source file exists
+    if [[ ! -f "$ova_file" ]]; then
+        error_exit "Source OVA file not found: $ova_file"
+    fi
     
     mkdir -p "$WORK_DIR"
     cd "$WORK_DIR"
     
+    log "INFO" "Working in: $(pwd)"
+    log "INFO" "Extracting OVA..."
+    
     # Extract OVA
-    tar -xf "$ova_file"
+    if ! tar -xf "$ova_file"; then
+        error_exit "Failed to extract OVA file"
+    fi
     
     # Find the main VMDK
-    local vmdk_file=$(ls *.vmdk | head -n1)
-    [[ -n "$vmdk_file" ]] || error_exit "No VMDK found in OVA"
+    local vmdk_file=$(ls *.vmdk 2>/dev/null | head -n1)
+    if [[ -z "$vmdk_file" ]]; then
+        log "ERROR" "No VMDK found in extracted OVA contents:"
+        ls -la
+        error_exit "No VMDK file found in OVA"
+    fi
+    
+    log "INFO" "Found extracted VMDK: $vmdk_file"
     
     # Convert to vSphere-compatible format
     local output_vmdk="${name_no_ext}.vmdk"
+    log "INFO" "Converting to: $output_vmdk"
     
-    log "INFO" "Converting to vSphere-compatible VMDK..."
-    qemu-img convert \
+    if ! qemu-img convert \
         -f vmdk \
         -O vmdk \
         -o adapter_type=lsilogic,subformat=streamOptimized,compat6 \
         "$vmdk_file" \
-        "$output_vmdk" || error_exit "VMDK conversion failed"
+        "$output_vmdk"; then
+        error_exit "VMDK conversion failed"
+    fi
     
-    # Clean up extraction
-    rm -f *.ovf *.mf "$vmdk_file"
+    # Verify output file was created
+    if [[ ! -f "$output_vmdk" ]]; then
+        error_exit "Conversion completed but output file not found: $output_vmdk"
+    fi
+    
+    log "INFO" "Conversion successful: $(ls -lh "$output_vmdk" | awk '{print $5}')"
+    
+    # Clean up extraction files
+    rm -f *.ovf *.mf "$vmdk_file" 2>/dev/null || true
     
     echo "$WORK_DIR/$output_vmdk"
 }
@@ -193,18 +242,27 @@ upload_vmdk() {
         return 0
     fi
     
-    log "WARN" "govc import.vmdk failed, trying datastore upload method..."
-    
-    # Alternative: Upload to datastore and create VM manually
+# Alternative: Upload to datastore and create VM manually
     local ds_dir="${vm_name}"
     local ds_path="[${GOVC_DATASTORE}] ${ds_dir}/${vm_name}.vmdk"
     
     # Create directory on datastore
-    govc datastore.mkdir "$ds_dir" || true
+    log "INFO" "Creating datastore directory: $ds_dir"
+    govc datastore.mkdir "$ds_dir" 2>/dev/null || true
     
     # Upload VMDK file
+    log "INFO" "Uploading VMDK to: $ds_path"
+    log "INFO" "Source file: $vmdk_file"
+    
+    # Verify source file exists before upload
+    if [[ ! -f "$vmdk_file" ]]; then
+        error_exit "Converted VMDK file not found: $vmdk_file"
+    fi
+    
+    log "INFO" "Source file size: $(ls -lh "$vmdk_file" | awk '{print $5}')"
+    
     if govc datastore.upload "$vmdk_file" "$ds_path"; then
-        log "INFO" "VMDK uploaded to datastore: $ds_path"
+        log "INFO" "VMDK uploaded to datastore successfully"
         
         # Create VM with the uploaded disk
         if govc vm.create \
@@ -464,3 +522,4 @@ mkdir -p "$WORK_DIR"
 
 # Run main function
 main "$@"
+
