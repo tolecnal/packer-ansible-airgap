@@ -1,67 +1,92 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${VSPHERE_SERVER:?}"
-: "${VSPHERE_USER:?}"
-: "${VSPHERE_PASSWORD:?}"
-: "${VSPHERE_DC:?}"
-: "${VSPHERE_CLUSTER:?}"
-: "${VSPHERE_FOLDER:?}"
-: "${VSPHERE_DATASTORE:?}"
+# =============================================================================
+# Pre-stage cloud images (OVA/QCOW2) as vSphere templates
+# =============================================================================
 
-FILES_DIR="./files"
+# Required environment variables
+: "${VSPHERE_DATACENTER:?Must be set}"
+: "${VSPHERE_CLUSTER:?Must be set}"
+: "${VSPHERE_DATASTORE:?Must be set}"
+: "${VSPHERE_RESOURCE_POOL:?Must be set}"
+: "${VSPHERE_FOLDER:?Must be set}"
 
+# Images to import (template name → file)
 declare -A IMAGES=(
-  ["debian-12"]="debian-12-genericcloud-amd64.qcow2"
-  ["debian-13"]="debian-13-genericcloud-amd64.qcow2"
-  ["ubuntu-22"]="jammy-server-cloudimg-amd64.ova"
   ["ubuntu-24"]="noble-server-cloudimg-amd64.ova"
+  ["ubuntu-22"]="jammy-server-cloudimg-amd64.ova"
+  ["debian-13"]="debian-13-genericcloud-amd64.qcow2"
+  ["debian-12"]="debian-12-genericcloud-amd64.qcow2"
 )
 
-for NAME in "${!IMAGES[@]}"; do
-  IMAGE="${FILES_DIR}/${IMAGES[$NAME]}"
-  TEMPLATE_NAME="${NAME}-cloudimg"
+echo "==> Using datacenter:     $VSPHERE_DATACENTER"
+echo "==> Using cluster:        $VSPHERE_CLUSTER"
+echo "==> Using datastore:      $VSPHERE_DATASTORE"
+echo "==> Using resource pool:  $VSPHERE_RESOURCE_POOL"
+echo "==> Using folder:         $VSPHERE_FOLDER"
+echo
 
-  echo "=== Processing $NAME ($IMAGE) ==="
+for TEMPLATE in "${!IMAGES[@]}"; do
+  FILE="files/${IMAGES[$TEMPLATE]}"
+  echo "==> Processing $TEMPLATE from $FILE"
 
-  if govc object.exists "/${VSPHERE_DC}/vm/${TEMPLATE_NAME}" >/dev/null 2>&1; then
-    echo "Template $TEMPLATE_NAME already exists. Skipping."
+  if [ ! -f "$FILE" ]; then
+    echo "    [ERROR] File not found: $FILE"
     continue
   fi
 
-  if [[ ! -f "$IMAGE" ]]; then
-    echo "ERROR: File $IMAGE does not exist. Skipping $NAME."
+  # Check if template already exists
+  if govc vm.info -dc="$VSPHERE_DATACENTER" -vm.ipath="/${VSPHERE_DATACENTER}/vm/${VSPHERE_FOLDER}/${TEMPLATE}" >/dev/null 2>&1; then
+    echo "    [SKIP] Template already exists in vSphere: $TEMPLATE"
     continue
   fi
 
-  if [[ "$IMAGE" == *.qcow2 ]]; then
-    VMDK_NAME="${IMAGE%.qcow2}.vmdk"
-    if [[ ! -f "$VMDK_NAME" ]]; then
-      echo "Converting $IMAGE -> $VMDK_NAME ..."
-      qemu-img convert -f qcow2 -O vmdk "$IMAGE" "$VMDK_NAME" || { echo "Conversion failed"; continue; }
-    fi
+  EXT="${FILE##*.}"
 
-    VM_NAME="${NAME}-vm"
-    echo "Creating VM $VM_NAME ..."
-    govc vm.create -m 2048 -c 2 -g otherGuest64 -ds "$VSPHERE_DATASTORE" -folder "$VSPHERE_FOLDER" "$VM_NAME" || { echo "VM creation failed"; continue; }
+  if [ "$EXT" = "ova" ]; then
+    echo "    Importing OVA → $TEMPLATE"
+    govc import.ova \
+      -dc="$VSPHERE_DATACENTER" \
+      -ds="$VSPHERE_DATASTORE" \
+      -pool="$VSPHERE_RESOURCE_POOL" \
+      -folder="$VSPHERE_FOLDER" \
+      -name="$TEMPLATE" \
+      "$FILE"
 
-    echo "Attaching disk $VMDK_NAME ..."
-    govc device.disk.add -vm "$VM_NAME" -disk "path=$VMDK_NAME,controller=0" || { echo "Disk attach failed"; continue; }
+  elif [ "$EXT" = "qcow2" ]; then
+    echo "    Creating VM from QCOW2 → $TEMPLATE"
 
-    echo "Marking $VM_NAME as template $TEMPLATE_NAME ..."
-    govc vm.markastemplate "$VM_NAME" || { echo "Mark as template failed"; continue; }
+    govc vm.create \
+      -dc="$VSPHERE_DATACENTER" \
+      -ds="$VSPHERE_DATASTORE" \
+      -pool="$VSPHERE_RESOURCE_POOL" \
+      -folder="$VSPHERE_FOLDER" \
+      -on=false \
+      -m=2048 -c=2 -g=debian12_64Guest \
+      "$TEMPLATE"
 
-  elif [[ "$IMAGE" == *.ova ]]; then
-    echo "Importing OVA $IMAGE ..."
-    govc import.ova -folder "$VSPHERE_FOLDER" -options /dev/null "$IMAGE" || { echo "OVA import failed"; continue; }
+    govc import.vmdk \
+      -dc="$VSPHERE_DATACENTER" \
+      -ds="$VSPHERE_DATASTORE" \
+      "$FILE" "$TEMPLATE"
 
-    IMPORTED_VM=$(govc vm.info | grep -Eo '^[^ ]+' | tail -n1)
-    echo "Marking $IMPORTED_VM as template $TEMPLATE_NAME ..."
-    govc vm.markastemplate "$IMPORTED_VM" || { echo "Mark as template failed"; continue; }
+    govc device.disk.change \
+      -dc="$VSPHERE_DATACENTER" \
+      -vm="$TEMPLATE" \
+      -disk.label="disk-0" \
+      -size=8G
+
+  else
+    echo "    [ERROR] Unknown file type for $FILE"
+    continue
   fi
 
-  echo "=== Finished $NAME ==="
+  echo "    Marking as template → $TEMPLATE"
+  govc vm.markastemplate -dc="$VSPHERE_DATACENTER" "$TEMPLATE"
+
 done
 
-echo "All templates processed."
+echo
+echo "==> Prestage completed successfully"
 
