@@ -7,7 +7,7 @@ set -euo pipefail
 
 # Required environment variables
 : "${VSPHERE_DATACENTER:?Must be set}"
-: "${VSPHERE_DATASTORE:?Must be set}"   # Must be a real datastore, not a cluster
+: "${VSPHERE_DATASTORE:?Must be set}"   # Must be a real datastore
 : "${VSPHERE_CLUSTER:?Must be set}"
 : "${VSPHERE_FOLDER:?Must be set}"
 : "${VSPHERE_RESOURCE_POOL:?Must be set}"
@@ -95,12 +95,13 @@ EOF
     GUEST_ID="${guest_ids[$template]}"
     VMDK_FILE="${file%.qcow2}.vmdk"
 
-    # Convert QCOW2 -> VMDK if not exists
+    # Convert QCOW2 -> VMDK (vSphere compatible)
     if [[ ! -f "$VMDK_FILE" ]]; then
       echo "🔄 Converting QCOW2 -> VMDK for $template"
-      qemu-img convert -p -O vmdk "$file" "$VMDK_FILE"
+      qemu-img convert -p -O vmdk -o subformat=streamOptimized "$file" "$VMDK_FILE"
     fi
 
+    # --- Create the VM first (no disk) ---
     echo "📦 Creating VM -> $template (guestId=$GUEST_ID)"
     govc vm.create \
       -ds="$VSPHERE_DATASTORE" \
@@ -113,19 +114,13 @@ EOF
       -net="$VSPHERE_NETWORK" \
       "$template"
 
-    echo "📦 Adding PVSCSI controller -> $template"
-    controller_name=$(govc device.scsi.add -vm "$template" -type pvscsi | awk '/^pvscsi/ {print $1}')
-    echo "    Controller created: $controller_name"
-
-    echo "📦 Uploading VMDK -> $template"
-    govc datastore.upload -ds "$VSPHERE_DATASTORE" "$VMDK_FILE" "$template/$template-disk1.vmdk"
-
-    echo "📦 Attaching disk -> $template"
-    govc vm.disk.attach \
+    # --- Import VMDK directly into VM ---
+    echo "📦 Importing VMDK -> $template"
+    govc import.vmdk \
       -vm "$template" \
-      -disk "$template/$template-disk1.vmdk" \
-      -controller "$controller_name" \
-      -ds "$VSPHERE_DATASTORE"
+      -ds "$VSPHERE_DATASTORE" \
+      -name "$template-disk1.vmdk" \
+      "$VMDK_FILE"
 
     echo "📦 Marking as template -> $template"
     govc vm.markastemplate "$template"
