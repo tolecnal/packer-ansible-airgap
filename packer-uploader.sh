@@ -149,8 +149,34 @@ convert_ubuntu_img() {
 upload_vmdk() {
     local vmdk_file="$1"
     local vm_name="$2"
+    local force_overwrite="${3:-false}"
     
     log "INFO" "Uploading $vmdk_file to vSphere as $vm_name..."
+    
+    # Check if VM/template already exists and handle accordingly
+    if govc vm.info "$vm_name" &>/dev/null; then
+        if [[ "$force_overwrite" == "true" ]]; then
+            log "WARN" "VM/template $vm_name already exists, removing it..."
+            
+            # Convert template back to VM if it's a template
+            if govc vm.info "$vm_name" | grep -q "Template: true"; then
+                govc vm.markasvm "$vm_name" 2>/dev/null || true
+            fi
+            
+            # Power off if running
+            govc vm.power -off "$vm_name" 2>/dev/null || true
+            
+            # Destroy existing VM
+            govc vm.destroy "$vm_name" || log "WARN" "Could not destroy existing VM: $vm_name"
+            
+            # Clean up datastore directory if it exists
+            govc datastore.rm -f "$vm_name" 2>/dev/null || true
+            
+            log "INFO" "Existing VM/template $vm_name removed"
+        else
+            error_exit "VM/template $vm_name already exists. Use -f flag to overwrite or choose a different name."
+        fi
+    fi
     
     # Try govc import.vmdk first (most reliable method)
     if govc import.vmdk \
@@ -207,6 +233,7 @@ upload_vmdk() {
 # Process a single image file
 process_image() {
     local image_file="$1"
+    local force_overwrite="${2:-false}"
     
     [[ -f "$image_file" ]] || error_exit "Image file not found: $image_file"
     
@@ -232,13 +259,15 @@ process_image() {
             ;;
     esac
     
-    upload_vmdk "$converted_vmdk" "$vm_name"
+    upload_vmdk "$converted_vmdk" "$vm_name" "$force_overwrite"
     
     log "INFO" "Successfully processed: $vm_name"
 }
 
 # Process all images in files directory
 process_all() {
+    local force_overwrite="${1:-false}"
+    
     log "INFO" "Processing all images in $FILES_DIR..."
     
     local count=0
@@ -247,7 +276,7 @@ process_all() {
     # Process all supported image types
     for pattern in "ubuntu-*.ova" "ubuntu-*.img" "debian-*.qcow2"; do
         while IFS= read -r -d '' file; do
-            if process_image "$file"; then
+            if process_image "$file" "$force_overwrite"; then
                 ((count++))
             else
                 ((failed++))
@@ -312,11 +341,13 @@ show_menu() {
     echo "====================================="
     echo "1) List available images"
     echo "2) Process specific image"
-    echo "3) Process all images"
-    echo "4) Show vSphere templates"
-    echo "5) Clean work directory"
-    echo "6) Test vSphere connection"
-    echo "7) Exit"
+    echo "3) Process specific image (force overwrite)"
+    echo "4) Process all images"
+    echo "5) Process all images (force overwrite)"
+    echo "6) Show vSphere templates"
+    echo "7) Clean work directory"
+    echo "8) Test vSphere connection"
+    echo "9) Exit"
     echo
 }
 
@@ -335,7 +366,10 @@ main() {
                 list_images
                 ;;
             "all")
-                process_all
+                process_all false
+                ;;
+            "all-force" | "-f" | "--force")
+                process_all true
                 ;;
             "clean")
                 clean_work
@@ -347,11 +381,22 @@ main() {
                 test_connection
                 ;;
             *)
-                # Assume it's a filename
-                if [[ -f "$FILES_DIR/$1" ]]; then
-                    process_image "$FILES_DIR/$1"
+                # Check for force flag
+                local force_flag=false
+                local filename="$1"
+                
+                if [[ "$1" == "-f" || "$1" == "--force" ]]; then
+                    force_flag=true
+                    filename="$2"
+                elif [[ "$2" == "-f" || "$2" == "--force" ]]; then
+                    force_flag=true
+                fi
+                
+                # Process specific file
+                if [[ -f "$FILES_DIR/$filename" ]]; then
+                    process_image "$FILES_DIR/$filename" "$force_flag"
                 else
-                    error_exit "File not found: $FILES_DIR/$1"
+                    error_exit "File not found: $FILES_DIR/$filename"
                 fi
                 ;;
         esac
@@ -361,7 +406,7 @@ main() {
     # Interactive menu
     while true; do
         show_menu
-        read -p "Select option (1-7): " choice
+        read -p "Select option (1-9): " choice
         
         case "$choice" in
             1)
@@ -371,24 +416,36 @@ main() {
                 echo
                 read -p "Enter image filename: " filename
                 if [[ -f "$FILES_DIR/$filename" ]]; then
-                    process_image "$FILES_DIR/$filename"
+                    process_image "$FILES_DIR/$filename" false
                 else
                     log "ERROR" "File not found: $FILES_DIR/$filename"
                 fi
                 ;;
             3)
-                process_all
+                echo
+                read -p "Enter image filename: " filename
+                if [[ -f "$FILES_DIR/$filename" ]]; then
+                    process_image "$FILES_DIR/$filename" true
+                else
+                    log "ERROR" "File not found: $FILES_DIR/$filename"
+                fi
                 ;;
             4)
-                show_templates
+                process_all false
                 ;;
             5)
-                clean_work
+                process_all true
                 ;;
             6)
-                test_connection
+                show_templates
                 ;;
             7)
+                clean_work
+                ;;
+            8)
+                test_connection
+                ;;
+            9)
                 log "INFO" "Exiting..."
                 exit 0
                 ;;
