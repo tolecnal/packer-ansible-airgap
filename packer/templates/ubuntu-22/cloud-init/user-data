@@ -1,0 +1,43 @@
+#cloud-config
+hostname: {{ vm_name }}
+manage_etc_hosts: true
+
+users:
+  - name: ansible
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - "<PASTE_PUBLIC_KEY_HERE>"
+
+ssh_pwauth: false
+disable_root: true
+
+storage:
+  layout:
+    name: lvm
+    swap: 2G
+    root_size: 32G
+    lv_groups:
+      - name: vg0
+        physical_volumes: ['/dev/sda']
+        logical_volumes:
+          - name: root
+            size: 32G
+            mount_point: /
+          - name: var
+            size: 16G
+            mount_point: /var
+          - name: varlog
+            size: 16G
+            mount_point: /var/log
+
+write_files:
+  - path: /etc/cloud/cloud.cfg.d/99_regen_ssh_host_keys.cfg
+    permissions: '0644'
+    content: |
+      ssh_deletekeys: true
+      ssh_genkeytypes: ['ed25519', 'rsa']
+
+runcmd:
+  - [ cloud-init-per, once, regenerate-keys, "dpkg-reconfigure", "openssh-server" ]
+

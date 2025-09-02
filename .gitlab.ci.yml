@@ -1,0 +1,57 @@
+stages:
+  - build
+
+.build_template: &build_template
+  stage: build
+  image: $PACKER_IMAGE
+  before_script:
+    - ./generate-keys.sh
+    - mkdir -p packer-logs
+  script:
+    - packer build $PACKER_FILE | tee packer-logs/$(basename $PACKER_FILE .pkr.hcl).log
+  artifacts:
+    paths:
+      - packer-logs/
+    when: always
+
+build:debian-12:
+  <<: *build_template
+  variables:
+    PACKER_FILE: debian-12/debian-12.pkr.hcl
+  when: manual
+
+build:debian-13:
+  <<: *build_template
+  variables:
+    PACKER_FILE: debian-13/debian-13.pkr.hcl
+  when: manual
+
+build:ubuntu-22:
+  <<: *build_template
+  variables:
+    PACKER_FILE: ubuntu-22/ubuntu-22.pkr.hcl
+  when: manual
+
+build:ubuntu-24:
+  <<: *build_template
+  variables:
+    PACKER_FILE: ubuntu-24/ubuntu-24.pkr.hcl
+  when: manual
+
+build:all:
+  stage: build
+  image: $PACKER_IMAGE
+  before_script:
+    - ./generate-keys.sh
+    - mkdir -p packer-logs
+  script:
+    - for tpl in debian-12/debian-12.pkr.hcl debian-13/debian-13.pkr.hcl ubuntu-22/ubuntu-22.pkr.hcl ubuntu-24/ubuntu-24.pkr.hcl; do
+        echo ">>> Building $tpl";
+        packer build "$tpl" | tee -a packer-logs/packer-all.log;
+      done
+  artifacts:
+    paths:
+      - packer-logs/
+    when: always
+  when: manual
+
