@@ -88,38 +88,25 @@ for template in "${!templates[@]}"; do
   "MarkAsTemplate": true
 }
 EOF
-      ) 2> >(grep -v "enableMPTSupport" >&2) \
+      ) 2> >(grep -v "enableMPTSupport" >&2) \ 
       "$file"
 
   elif [[ "$EXT" == "qcow2" ]]; then
     GUEST_ID="${guest_ids[$template]}"
     VMDK_FILE="${file%.qcow2}.vmdk"
 
-    # Convert QCOW2 -> VMDK (vSphere compatible)
+    # Convert QCOW2 -> VMDK (vSphere compatible) if not exists
     if [[ ! -f "$VMDK_FILE" ]]; then
       echo "🔄 Converting QCOW2 -> VMDK for $template"
       qemu-img convert -p -O vmdk -o subformat=streamOptimized "$file" "$VMDK_FILE"
     fi
 
-    # --- Create the VM first (no disk) ---
-    echo "📦 Creating VM -> $template (guestId=$GUEST_ID)"
-    govc vm.create \
+    echo "📦 Importing VMDK -> $template"
+    govc import.vmdk \
       -ds="$VSPHERE_DATASTORE" \
       -pool="$VSPHERE_RESOURCE_POOL" \
       -folder="$VSPHERE_FOLDER" \
-      -on=false \
-      -m=2048 \
-      -c=2 \
-      -g="$GUEST_ID" \
-      -net="$VSPHERE_NETWORK" \
-      "$template"
-
-    # --- Import VMDK directly into VM ---
-    echo "📦 Importing VMDK -> $template"
-    govc import.vmdk \
-      -vm "$template" \
-      -ds "$VSPHERE_DATASTORE" \
-      -name "$template-disk1.vmdk" \
+      -name="$template" \
       "$VMDK_FILE"
 
     echo "📦 Marking as template -> $template"
