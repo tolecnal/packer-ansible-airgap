@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --- Required environment variables ---
+# =============================================================================
+# Prestage cloud images (OVA/QCOW2) as vSphere templates
+# =============================================================================
+
+# Required environment variables
 : "${VSPHERE_DATACENTER:?Must be set}"
 : "${VSPHERE_DATASTORE:?Must be set}"
 : "${VSPHERE_CLUSTER:?Must be set}"
-: "${VSPHERE_RESOURCE_POOL:?Must be set}"
 : "${VSPHERE_FOLDER:?Must be set}"
+: "${VSPHERE_RESOURCE_POOL:?Must be set}"
 : "${VSPHERE_NETWORK:?Must be set}"
 
 FILES_DIR="files"
@@ -21,10 +25,9 @@ fi
 echo "✅ Found network: $VSPHERE_NETWORK"
 
 # --- Verify resource pool exists ---
-if ! govc find "/${VSPHERE_DATACENTER}/host/${VSPHERE_CLUSTER}/Resources" -type p -name "$VSPHERE_RESOURCE_POOL" >/dev/null 2>&1; then
-  echo "❌ Error: Resource pool '$VSPHERE_RESOURCE_POOL' not found in cluster '$VSPHERE_CLUSTER'."
-  echo "   Available resource pools are:"
-  govc find "/${VSPHERE_DATACENTER}/host/${VSPHERE_CLUSTER}/Resources" -type p | sed 's#.*/##'
+if ! govc pool.info "$VSPHERE_RESOURCE_POOL" >/dev/null 2>&1; then
+  echo "❌ Error: Resource pool '$VSPHERE_RESOURCE_POOL' not found."
+  govc pool.ls
   exit 1
 fi
 echo "✅ Found resource pool: $VSPHERE_RESOURCE_POOL"
@@ -42,35 +45,60 @@ for template in "${!templates[@]}"; do
   file="${templates[$template]}"
   echo "-----> Processing template: $template"
 
-  if govc vm.info -json "$template" >/dev/null 2>&1; then
+  # --- Check if template exists ---
+  if govc vm.info -json "$template" | jq -e '.virtualMachines != null' >/dev/null 2>&1; then
     echo "⚠️  Template '$template' already exists, skipping."
     continue
   fi
 
   if [[ ! -f "$file" ]]; then
     echo "❌ File not found: $file"
-    exit 1
+    continue
   fi
 
-  if [[ "$file" == *.ova ]]; then
+  EXT="${file##*.}"
+
+  if [[ "$EXT" == "ova" ]]; then
     echo "📦 Importing OVA -> $template"
-    govc import.ova -options <(cat <<EOF
+    govc import.ova \
+      -ds="$VSPHERE_DATASTORE" \
+      -pool="$VSPHERE_RESOURCE_POOL" \
+      -folder="$VSPHERE_FOLDER" \
+      -name="$template" \
+      -net="$VSPHERE_NETWORK" \
+      -options <(cat <<EOF
 {
   "DiskProvisioning": "thin",
-  "MarkAsTemplate": true,
-  "Name": "$template",
-  "NetworkMapping": [
-    { "Name": "VM Network", "Network": "$VSPHERE_NETWORK" }
-  ]
+  "MarkAsTemplate": true
 }
 EOF
-    ) -ds="$VSPHERE_DATASTORE" -pool="/${VSPHERE_DATACENTER}/host/${VSPHERE_CLUSTER}/Resources/${VSPHERE_RESOURCE_POOL}" "$file"
-  else
-    echo "📦 Importing QCOW2 -> $template"
-    govc vm.create -on=false -template -ds="$VSPHERE_DATASTORE" -pool="/${VSPHERE_DATACENTER}/host/${VSPHERE_CLUSTER}/Resources/${VSPHERE_RESOURCE_POOL}" -folder="$VSPHERE_FOLDER" -net="$VSPHERE_NETWORK" -disk.controller pvscsi -disk 20GB -memory 2048 -c 2 "$template"
+      ) 2> >(grep -v "enableMPTSupport" >&2) \
+      "$file"
 
+  elif [[ "$EXT" == "qcow2" ]]; then
+    echo "📦 Creating VM -> $template"
+    govc vm.create \
+      -ds="$VSPHERE_DATASTORE" \
+      -pool="$VSPHERE_RESOURCE_POOL" \
+      -folder="$VSPHERE_FOLDER" \
+      -on=false \
+      -m=2048 \
+      -c=2 \
+      -g=debian12_64Guest \
+      "$template"
+
+    echo "📦 Uploading QCOW2 as VMDK -> $template"
     govc datastore.upload -ds="$VSPHERE_DATASTORE" "$file" "$template/$template-disk1.vmdk"
-    govc vm.disk.change -vm="$template" -disk.label "Hard disk 1" -disk.name "$template/$template-disk1.vmdk"
+
+    echo "📦 Attaching disk -> $template"
+    govc vm.disk.attach -vm="$template" -disk "$template/$template-disk1.vmdk" -controller pvscsi
+
+    echo "📦 Marking as template -> $template"
+    govc vm.markastemplate "$template"
+
+  else
+    echo "❌ Unknown file type: $file"
+    continue
   fi
 
   echo "✅ Successfully staged template: $template"
