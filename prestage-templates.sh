@@ -40,6 +40,14 @@ declare -A templates=(
   ["debian-13"]="${FILES_DIR}/debian-13-genericcloud-amd64.qcow2"
 )
 
+# --- Guest IDs per OS for QCOW2 imports ---
+declare -A guest_ids=(
+  ["debian-12"]="debian10_64Guest"
+  ["debian-13"]="debian10_64Guest"
+  ["ubuntu-22"]="ubuntu64Guest"
+  ["ubuntu-24"]="ubuntu64Guest"
+)
+
 # --- Prestage loop ---
 for template in "${!templates[@]}"; do
   file="${templates[$template]}"
@@ -76,7 +84,9 @@ EOF
       "$file"
 
   elif [[ "$EXT" == "qcow2" ]]; then
-    echo "📦 Creating VM -> $template"
+    GUEST_ID="${guest_ids[$template]}"
+
+    echo "📦 Creating VM -> $template (guestId=$GUEST_ID)"
     govc vm.create \
       -ds="$VSPHERE_DATASTORE" \
       -pool="$VSPHERE_RESOURCE_POOL" \
@@ -84,7 +94,8 @@ EOF
       -on=false \
       -m=2048 \
       -c=2 \
-      -g=debian12_64Guest \
+      -g="$GUEST_ID" \
+      -net="$VSPHERE_NETWORK" \
       "$template"
 
     echo "📦 Uploading QCOW2 as VMDK -> $template"
